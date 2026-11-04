@@ -763,9 +763,19 @@ class _VirtualJoystickState extends State<VirtualJoystick> {
   void _resetPosition() {
     final size = MediaQuery.of(context).size;
     setState(() {
+      // Bottom-right, beside the scroll wheel and above the left/right buttons,
+      // for right-thumb operation.
       _position = Offset(
-        _kSpaceToHorizontalEdge + _joystickRadius,
-        size.height * 0.5 + _joystickRadius * 1.5,
+        size.width -
+            _kSpaceToHorizontalEdge -
+            _wheelWidth -
+            12 -
+            _joystickRadius,
+        size.height -
+            _kSpaceToVerticalEdge -
+            _kLeftRightButtonHeight -
+            10 -
+            _joystickRadius,
       );
       _isInitialized = true;
     });
