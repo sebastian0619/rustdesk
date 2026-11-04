@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show DisplayFeatureState, DisplayFeatureType;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
