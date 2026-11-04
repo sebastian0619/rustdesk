@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show max;
 import 'dart:ui' show DisplayFeatureState, DisplayFeatureType;
 
 import 'package:flutter/material.dart';
@@ -554,29 +555,59 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     }
   }
 
-  // Lower half in tabletop posture: touchpad (when toggled) and the toggle
-  // button, shown just above the fold so it is never covered by the keyboard.
-  Widget _tabletopExtras(Rect fold) => Stack(children: [
-        if (_tabletopPad)
-          Positioned(
-              left: 0,
-              right: 0,
-              top: fold.bottom,
-              bottom: 0,
-              child: TabletopTouchpad(ffi: gFFI)),
-        Positioned(
-          right: 8,
-          top: fold.top - 52,
-          child: FloatingActionButton(
-            mini: true,
-            heroTag: 'tabletop_pad_toggle',
-            backgroundColor: MyTheme.accent,
-            onPressed: _toggleTabletopPad,
-            child: Icon(_tabletopPad ? Icons.keyboard : Icons.touch_app,
-                color: Colors.white),
-          ),
-        ),
-      ]);
+  // Lower half in tabletop posture. The modifier/function key bar and the
+  // touchpad toggle sit right above the soft keyboard; the touchpad (when
+  // toggled) fills the lower half below them.
+  Widget _tabletopExtras(Rect fold) => Obx(() {
+        // Read the Rx first: Obx must observe at least one reactive value.
+        final chatKeyboardRequested =
+            gFFI.chatModel.softKeyboardRequested.value;
+        final keyboardIsVisible = keyboardVisibilityController.isVisible &&
+            (_showEdit || chatKeyboardRequested);
+        final bar = Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+                child: KeyHelpTools(
+                    keyboardIsVisible: keyboardIsVisible,
+                    showGestureHelp: _showGestureHelp,
+                    forceShow: _tabletopPad)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 8, 8),
+              child: FloatingActionButton(
+                mini: true,
+                heroTag: 'tabletop_pad_toggle',
+                backgroundColor: MyTheme.accent,
+                onPressed: _toggleTabletopPad,
+                child: Icon(_tabletopPad ? Icons.keyboard : Icons.touch_app,
+                    color: Colors.white),
+              ),
+            ),
+          ],
+        );
+        return LayoutBuilder(builder: (context, cons) {
+          if (_tabletopPad) {
+            return Stack(children: [
+              Positioned(
+                  left: 0,
+                  right: 0,
+                  top: fold.bottom,
+                  bottom: 0,
+                  child: Column(children: [
+                    bar,
+                    Expanded(child: TabletopTouchpad(ffi: gFFI)),
+                  ])),
+            ]);
+          }
+          // Keep the bar just above the soft keyboard (or the bottom edge).
+          final mq = MediaQuery.of(context);
+          final bottom =
+              max(0.0, cons.maxHeight - (mq.size.height - mq.viewInsets.bottom));
+          return Stack(children: [
+            Positioned(left: 0, right: 0, bottom: bottom, child: bar),
+          ]);
+        });
+      });
 
   Widget _bottomWidget() => _showGestureHelp
       ? getGestureHelp()
@@ -693,7 +724,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           Align(
               alignment: Alignment.topCenter,
               child: SizedBox(height: fold.top, child: child)),
-          _tabletopExtras(fold),
+          Positioned.fill(child: _tabletopExtras(fold)),
         ]);
 
   bool _handleLocalKeyEvent(KeyEvent event) => handleMobileLocalKeyEvent(event,
@@ -830,14 +861,17 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
               right: 10,
               child: QualityMonitor(gFFI.qualityMonitorModel),
             ),
-            Obx(() {
-              final chatKeyboardRequested =
-                  gFFI.chatModel.softKeyboardRequested.value;
-              return KeyHelpTools(
-                  keyboardIsVisible: keyboardVisibilityController.isVisible &&
-                      (_showEdit || chatKeyboardRequested),
-                  showGestureHelp: _showGestureHelp);
-            }),
+            // In tabletop posture the key bar lives in the lower half, above the
+            // soft keyboard (see `_tabletopExtras`).
+            if (_tabletopFoldTop == null)
+              Obx(() {
+                final chatKeyboardRequested =
+                    gFFI.chatModel.softKeyboardRequested.value;
+                return KeyHelpTools(
+                    keyboardIsVisible: keyboardVisibilityController.isVisible &&
+                        (_showEdit || chatKeyboardRequested),
+                    showGestureHelp: _showGestureHelp);
+              }),
             SizedBox(
               width: 0,
               height: 0,
@@ -1097,11 +1131,16 @@ class KeyHelpTools extends StatefulWidget {
   final bool keyboardIsVisible;
   final bool showGestureHelp;
 
+  /// Show regardless of the keyboard state (tabletop touchpad mode).
+  final bool forceShow;
+
   /// need to show by external request, etc [keyboardIsVisible] or [changeTouchMode]
-  bool get requestShow => keyboardIsVisible || showGestureHelp;
+  bool get requestShow => keyboardIsVisible || showGestureHelp || forceShow;
 
   KeyHelpTools(
-      {required this.keyboardIsVisible, required this.showGestureHelp});
+      {required this.keyboardIsVisible,
+      required this.showGestureHelp,
+      this.forceShow = false});
 
   @override
   State<KeyHelpTools> createState() => _KeyHelpToolsState();

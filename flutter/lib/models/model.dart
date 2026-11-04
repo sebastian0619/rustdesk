@@ -3147,8 +3147,13 @@ class CursorModel with ChangeNotifier {
 
   bool get lastKeyboardIsVisible => _lastKeyboardIsVisible;
 
+  // In tabletop posture the key bar is in the lower half, so the canvas does
+  // not need to make room for it.
   Rect? get keyHelpToolsRectToAdjustCanvas =>
-      _lastKeyboardIsVisible ? _keyHelpToolsRect : null;
+      (_lastKeyboardIsVisible &&
+              parent.target?.canvasModel.tabletopFoldTop == null)
+          ? _keyHelpToolsRect
+          : null;
   // The blocked rect is used to block the pointer/touch events in the remote page.
   final List<Rect> _blockedRects = [];
   // Used in shouldBlock().
