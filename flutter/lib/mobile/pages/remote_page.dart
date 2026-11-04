@@ -8,6 +8,7 @@ import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/mobile/widgets/floating_mouse.dart';
 import 'package:flutter_hbb/mobile/widgets/floating_mouse_widgets.dart';
 import 'package:flutter_hbb/mobile/widgets/gesture_help.dart';
+import 'package:flutter_hbb/mobile/widgets/tabletop_touchpad.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
 import 'package:flutter_svg/svg.dart';
@@ -28,16 +29,16 @@ import '../widgets/custom_scale_widget.dart';
 
 final initText = '1' * 1024;
 
-/// Returns the top Y coordinate of the horizontal fold when a foldable device is
+/// Returns the bounds of the horizontal fold when a foldable device is
 /// half-opened in tabletop posture (flat bottom half, upright top half), or null.
-double? tabletopFoldTopOf(BuildContext context) {
+Rect? tabletopFoldOf(BuildContext context) {
   if (!isAndroid) return null;
   for (final f in MediaQuery.of(context).displayFeatures) {
     if ((f.type == DisplayFeatureType.fold ||
             f.type == DisplayFeatureType.hinge) &&
         f.state == DisplayFeatureState.postureHalfOpened &&
         f.bounds.width > f.bounds.height) {
-      return f.bounds.top;
+      return f.bounds;
     }
   }
   return null;
@@ -119,6 +120,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
   double? _tabletopFoldTop;
+  bool _tabletopPad = false; // lower half shows touchpad instead of keyboard
   bool _tabletopKeyboardOpened = false;
 
   Worker? _waylandKeyboardGateWorker;
@@ -512,7 +514,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       await gFFI.canvasModel.updateViewStyle();
       final ffiModel = gFFI.ffiModel;
       if (entering) {
-        if (ffiModel.pi.isSet.isTrue &&
+        if (!_tabletopPad &&
+            ffiModel.pi.isSet.isTrue &&
             !isWebDesktop &&
             !ffiModel.viewOnly &&
             ffiModel.keyboard &&
@@ -520,15 +523,59 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
           _tabletopKeyboardOpened = true;
           openKeyboard();
         }
-      } else if (leaving && _tabletopKeyboardOpened) {
-        _tabletopKeyboardOpened = false;
-        setState(() => _showEdit = false);
-        gFFI.invokeMethod("enable_soft_keyboard", false);
-        _mobileFocusNode.unfocus();
-        _physicalFocusNode.requestFocus();
+      } else if (leaving) {
+        if (_tabletopPad) setState(() => _tabletopPad = false);
+        if (_tabletopKeyboardOpened) {
+          _tabletopKeyboardOpened = false;
+          setState(() => _showEdit = false);
+          gFFI.invokeMethod("enable_soft_keyboard", false);
+          _mobileFocusNode.unfocus();
+          _physicalFocusNode.requestFocus();
+        }
       }
     });
   }
+
+  void _toggleTabletopPad() {
+    if (_tabletopPad) {
+      setState(() => _tabletopPad = false);
+      _tabletopKeyboardOpened = true;
+      openKeyboard();
+    } else {
+      setState(() {
+        _tabletopPad = true;
+        _showEdit = false;
+      });
+      _tabletopKeyboardOpened = false;
+      gFFI.invokeMethod("enable_soft_keyboard", false);
+      _mobileFocusNode.unfocus();
+      _physicalFocusNode.requestFocus();
+    }
+  }
+
+  // Lower half in tabletop posture: touchpad (when toggled) and the toggle
+  // button, shown just above the fold so it is never covered by the keyboard.
+  Widget _tabletopExtras(Rect fold) => Stack(children: [
+        if (_tabletopPad)
+          Positioned(
+              left: 0,
+              right: 0,
+              top: fold.bottom,
+              bottom: 0,
+              child: TabletopTouchpad(ffi: gFFI)),
+        Positioned(
+          right: 8,
+          top: fold.top - 52,
+          child: FloatingActionButton(
+            mini: true,
+            heroTag: 'tabletop_pad_toggle',
+            backgroundColor: MyTheme.accent,
+            onPressed: _toggleTabletopPad,
+            child: Icon(_tabletopPad ? Icons.keyboard : Icons.touch_app,
+                color: Colors.white),
+          ),
+        ),
+      ]);
 
   Widget _bottomWidget() => _showGestureHelp
       ? getGestureHelp()
@@ -541,7 +588,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     final keyboardIsVisible =
         keyboardVisibilityController.isVisible && _showEdit;
     final showActionButton = !_showBar || keyboardIsVisible || _showGestureHelp;
-    final tabletopFoldTop = tabletopFoldTopOf(context);
+    final tabletopFold = tabletopFoldOf(context);
+    final tabletopFoldTop = tabletopFold?.top;
     _syncTabletop(tabletopFoldTop);
 
     return WillPopScope(
@@ -599,7 +647,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 ],
               )),
           body: _constrainToTabletop(
-              tabletopFoldTop,
+              tabletopFold,
               Obx(
             () => getRawPointerAndKeyBody(Overlay(
               initialEntries: [
@@ -638,11 +686,14 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _constrainToTabletop(double? foldTop, Widget child) => foldTop == null
+  Widget _constrainToTabletop(Rect? fold, Widget child) => fold == null
       ? child
-      : Align(
-          alignment: Alignment.topCenter,
-          child: SizedBox(height: foldTop, child: child));
+      : Stack(children: [
+          Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(height: fold.top, child: child)),
+          _tabletopExtras(fold),
+        ]);
 
   bool _handleLocalKeyEvent(KeyEvent event) => handleMobileLocalKeyEvent(event,
       remoteFocused: _physicalFocusNode.hasPrimaryFocus, inputModel: inputModel);
