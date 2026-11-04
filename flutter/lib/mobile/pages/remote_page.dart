@@ -28,6 +28,21 @@ import '../widgets/custom_scale_widget.dart';
 
 final initText = '1' * 1024;
 
+/// Returns the top Y coordinate of the horizontal fold when a foldable device is
+/// half-opened in tabletop posture (flat bottom half, upright top half), or null.
+double? tabletopFoldTopOf(BuildContext context) {
+  if (!isAndroid) return null;
+  for (final f in MediaQuery.of(context).displayFeatures) {
+    if ((f.type == DisplayFeatureType.fold ||
+            f.type == DisplayFeatureType.hinge) &&
+        f.state == DisplayFeatureState.postureHalfOpened &&
+        f.bounds.width > f.bounds.height) {
+      return f.bounds.top;
+    }
+  }
+  return null;
+}
+
 // Workaround for Android (default input method, Microsoft SwiftKey keyboard) when using physical keyboard.
 // When connecting a physical keyboard, `KeyEvent.physicalKey.usbHidUsage` are wrong is using Microsoft SwiftKey keyboard.
 // https://github.com/flutter/flutter/issues/159384
@@ -103,6 +118,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
+  double? _tabletopFoldTop;
+  bool _tabletopKeyboardOpened = false;
 
   Worker? _waylandKeyboardGateWorker;
   bool _waylandKeyboardGateInitialized = false;
@@ -482,6 +499,37 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     });
   }
 
+  // Foldable (e.g. Xiaomi MIX Flip/Fold) tabletop posture: remote view on the
+  // upper half, soft keyboard on the lower half.
+  void _syncTabletop(double? foldTop) {
+    if (_tabletopFoldTop == foldTop) return;
+    final entering = _tabletopFoldTop == null && foldTop != null;
+    final leaving = _tabletopFoldTop != null && foldTop == null;
+    _tabletopFoldTop = foldTop;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      gFFI.canvasModel.tabletopFoldTop = foldTop;
+      await gFFI.canvasModel.updateViewStyle();
+      final ffiModel = gFFI.ffiModel;
+      if (entering) {
+        if (ffiModel.pi.isSet.isTrue &&
+            !isWebDesktop &&
+            !ffiModel.viewOnly &&
+            ffiModel.keyboard &&
+            !keyboardVisibilityController.isVisible) {
+          _tabletopKeyboardOpened = true;
+          openKeyboard();
+        }
+      } else if (leaving && _tabletopKeyboardOpened) {
+        _tabletopKeyboardOpened = false;
+        setState(() => _showEdit = false);
+        gFFI.invokeMethod("enable_soft_keyboard", false);
+        _mobileFocusNode.unfocus();
+        _physicalFocusNode.requestFocus();
+      }
+    });
+  }
+
   Widget _bottomWidget() => _showGestureHelp
       ? getGestureHelp()
       : (_showBar && gFFI.ffiModel.pi.displays.isNotEmpty
@@ -493,6 +541,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     final keyboardIsVisible =
         keyboardVisibilityController.isVisible && _showEdit;
     final showActionButton = !_showBar || keyboardIsVisible || _showGestureHelp;
+    final tabletopFoldTop = tabletopFoldTopOf(context);
+    _syncTabletop(tabletopFoldTop);
 
     return WillPopScope(
       onWillPop: () async {
@@ -500,6 +550,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         return false;
       },
       child: Scaffold(
+          // In tabletop posture the view is pinned above the fold, so the soft
+          // keyboard (lower half) must not resize it.
+          resizeToAvoidBottomInset: tabletopFoldTop == null,
           // workaround for https://github.com/rustdesk/rustdesk/issues/3131
           floatingActionButtonLocation: keyboardIsVisible
               ? FABLocation(FloatingActionButtonLocation.endFloat, 0, -35)
@@ -545,7 +598,9 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                       : Offstage(),
                 ],
               )),
-          body: Obx(
+          body: _constrainToTabletop(
+              tabletopFoldTop,
+              Obx(
             () => getRawPointerAndKeyBody(Overlay(
               initialEntries: [
                 OverlayEntry(builder: (context) {
@@ -579,9 +634,15 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
                 })
               ],
             )),
-          )),
+          ))),
     );
   }
+
+  Widget _constrainToTabletop(double? foldTop, Widget child) => foldTop == null
+      ? child
+      : Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(height: foldTop, child: child));
 
   bool _handleLocalKeyEvent(KeyEvent event) => handleMobileLocalKeyEvent(event,
       remoteFocused: _physicalFocusNode.hasPrimaryFocus, inputModel: inputModel);

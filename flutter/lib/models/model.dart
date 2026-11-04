@@ -2336,6 +2336,10 @@ class CanvasModel with ChangeNotifier {
   static double get bottomToEdge =>
       isDesktop ? windowBorderWidth + kDragToResizeAreaPadding.bottom : 0;
 
+  // mobile only. Y coordinate of the horizontal fold (hinge) of a foldable
+  // device in tabletop posture, or null when not in tabletop posture.
+  double? tabletopFoldTop;
+
   Size getSize() {
     final mediaData = MediaQueryData.fromView(ui.window);
     final size = mediaData.size;
@@ -2347,10 +2351,18 @@ class CanvasModel with ChangeNotifier {
       w = w - mediaData.padding.left - mediaData.padding.right;
       // Vertically, subtract the bottom keyboard inset (viewInsets.bottom) and any
       // bottom overlay (e.g. key-help tools) so the canvas is not covered.
-      h = h -
-          mediaData.viewInsets.bottom -
-          (parent.target?.cursorModel.keyHelpToolsRectToAdjustCanvas?.bottom ??
-              0);
+      final foldTop = tabletopFoldTop;
+      if (foldTop != null) {
+        // Foldable in tabletop posture: the remote view only uses the area above
+        // the fold, the area below is reserved for the soft keyboard.
+        h = foldTop - topToEdge - bottomToEdge;
+      } else {
+        h = h -
+            mediaData.viewInsets.bottom -
+            (parent.target?.cursorModel.keyHelpToolsRectToAdjustCanvas
+                    ?.bottom ??
+                0);
+      }
       // Orientation-specific handling:
       //  - Portrait: additionally subtract top padding (e.g. status bar / notch)
       //  - Landscape: does not subtract mediaData.padding.top/bottom (home indicator auto-hides)
