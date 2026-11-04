@@ -247,7 +247,14 @@ jobs:
           # Increase Gradle JVM memory for CI builds
           sed -i "s/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g" ./flutter/android/gradle.properties
           # temporary use debug sign config
-          sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
+          # stable signing key so that new builds can update the installed app
+          echo "${{ secrets.FOLD_KEYSTORE_B64 }}" | base64 -d > "$GITHUB_WORKSPACE/flutter/android/fold.keystore"
+          {
+            echo "storeFile=$GITHUB_WORKSPACE/flutter/android/fold.keystore"
+            echo "storePassword=${{ secrets.FOLD_KEYSTORE_PASS }}"
+            echo "keyPassword=${{ secrets.FOLD_KEYSTORE_PASS }}"
+            echo "keyAlias=fold"
+          } > "$GITHUB_WORKSPACE/flutter/android/key.properties"
           case ${{ matrix.job.target }} in
             aarch64-linux-android)
               mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
@@ -255,7 +262,7 @@ jobs:
               cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so ./flutter/android/app/src/main/jniLibs/arm64-v8a/librustdesk.so
               # build flutter
               pushd flutter
-              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm64 --split-per-abi
+              flutter build apk "--${{ matrix.job.reltype }}" --target-platform android-arm64 --split-per-abi --build-number=$((100000 + ${{ github.run_number }}))
               mv build/app/outputs/flutter-apk/app-arm64-v8a-${{ matrix.job.reltype }}.apk ../rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}${{ matrix.job.suffix }}.apk
             ;;
             armv7-linux-androideabi)
