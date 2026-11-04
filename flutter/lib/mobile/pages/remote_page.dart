@@ -31,14 +31,16 @@ import '../widgets/custom_scale_widget.dart';
 
 final initText = '1' * 1024;
 
-/// Returns the bounds of the horizontal fold when a foldable device is
-/// half-opened in tabletop posture (flat bottom half, upright top half), or null.
+/// Returns the bounds of the horizontal fold when a foldable device is in tabletop
+/// posture (half-opened, flat bottom half, upright top half), or fully unfolded
+/// (flat) in portrait where the fold is also horizontal; null otherwise.
 Rect? tabletopFoldOf(BuildContext context) {
   if (!isAndroid) return null;
   for (final f in MediaQuery.of(context).displayFeatures) {
     if ((f.type == DisplayFeatureType.fold ||
             f.type == DisplayFeatureType.hinge) &&
-        f.state == DisplayFeatureState.postureHalfOpened &&
+        (f.state == DisplayFeatureState.postureHalfOpened ||
+            f.state == DisplayFeatureState.postureFlat) &&
         f.bounds.width > f.bounds.height) {
       return f.bounds;
     }
@@ -723,7 +725,12 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
       : Stack(children: [
           Align(
               alignment: Alignment.topCenter,
-              child: SizedBox(height: fold.top, child: child)),
+              // The floating mouse widgets lay themselves out from
+              // MediaQuery.size, so give them the size of the upper region.
+              child: MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                      size: Size(MediaQuery.of(context).size.width, fold.top)),
+                  child: SizedBox(height: fold.top, child: child))),
           Positioned.fill(child: _tabletopExtras(fold)),
         ]);
 
